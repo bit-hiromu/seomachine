@@ -22,19 +22,25 @@ CONTEXT_DIR = ROOT / "context"
 DRAFTS_DIR = ROOT / "drafts"
 TOPICS_FILE = ROOT / "topics" / "current-topic.txt"
 
-GROQ_MODEL = "llama-3.1-8b-instant"  # TPD 500K（無料枠）
+GROQ_MODEL = "gemma2-9b-it"  # TPM 15K / TPD 500K（無料枠）
 MAX_RETRIES = 3
 RETRY_DELAY = 5  # 秒
 
 
+MAX_CONTEXT_CHARS = 1500  # システムプロンプトのトークン超過を防ぐ上限
+
+
 def load_context_file(filename: str) -> str:
-    """context/ フォルダからファイルを読み込む。"""
+    """context/ フォルダからファイルを読み込む（1500文字に制限）。"""
     filepath = CONTEXT_DIR / filename
     if not filepath.exists():
         logger.warning(f"コンテキストファイルが見つかりません: {filepath}")
         return ""
     with open(filepath, encoding="utf-8") as f:
-        return f.read()
+        content = f.read()
+    if len(content) > MAX_CONTEXT_CHARS:
+        content = content[:MAX_CONTEXT_CHARS] + "\n...(省略)"
+    return content
 
 
 def load_current_topic() -> dict:
