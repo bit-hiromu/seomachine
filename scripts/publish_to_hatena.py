@@ -41,8 +41,29 @@ def load_latest_draft() -> tuple[Path, dict, str]:
 
 
 def parse_frontmatter(content: str) -> tuple[dict, str]:
-    """YAMLフロントマターを解析し (frontmatter_dict, body) を返す。"""
-    match = re.match(r"^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$", content, re.MULTILINE)
+    """YAMLフロントマターを解析し (frontmatter_dict, body) を返す。
+
+    以下の形式に対応:
+    1. 通常のフロントマター: --- ... ---
+    2. コードブロック内フロントマター: ```yaml\n--- ... ---\n```
+    """
+    # パターン1: ```yaml\n---...---\n``` 形式（LLMがコードブロックで出力した場合）
+    cb_match = re.match(
+        r"^```(?:yaml)?\s*\n---\s*\n([\s\S]*?)\n---\s*\n```\s*\n?([\s\S]*)$",
+        content.strip(),
+        re.MULTILINE,
+    )
+    if cb_match:
+        try:
+            fm = yaml.safe_load(cb_match.group(1))
+            body = cb_match.group(2).strip()
+            logger.info("コードブロック形式のフロントマターを検出・除去しました")
+            return fm or {}, body
+        except yaml.YAMLError as e:
+            logger.warning(f"YAMLパースエラー（コードブロック形式）: {e}")
+
+    # パターン2: 通常のフロントマター --- ... ---
+    match = re.match(r"^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$", content.strip(), re.MULTILINE)
     if match:
         try:
             fm = yaml.safe_load(match.group(1))
@@ -51,7 +72,8 @@ def parse_frontmatter(content: str) -> tuple[dict, str]:
         except yaml.YAMLError as e:
             logger.warning(f"YAMLパースエラー: {e}")
 
-    # フロントマターがない場合
+    # フロントマターが見つからない場合: タイトルを本文先頭から抽出を試みる
+    logger.warning("フロントマターが見つかりませんでした。本文をそのまま使用します。")
     return {}, content.strip()
 
 

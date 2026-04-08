@@ -63,9 +63,9 @@ def build_system_prompt(brand_voice: str, style_guide: str, seo_guidelines: str)
 {seo_guidelines}
 ---
 
-記事は必ず以下の形式で出力してください:
+記事は必ず以下の形式で出力してください。
+コードブロックで囲まずに、そのまま出力してください:
 
-```yaml
 ---
 title: "記事タイトル（32文字以内）"
 description: "メタディスクリプション（120文字以内）"
@@ -73,10 +73,13 @@ category: "claude-code"
 keywords: ["キーワード1", "キーワード2"]
 date: "{datetime.now().strftime('%Y-%m-%d')}"
 ---
-```
 
-その後に Markdown 形式の本文を続けてください。
-コードブロックは必ず言語を指定し、実際に動作するコード例を含めてください。"""
+# 記事タイトル
+
+本文をここに書く...
+
+重要: フロントマター（---で囲まれた部分）はコードブロックに入れないでください。
+本文中のコードブロックは必ず言語を指定し、実際に動作するコード例を含めてください。"""
 
 
 CLAUDE_CODE_FACTS = """
