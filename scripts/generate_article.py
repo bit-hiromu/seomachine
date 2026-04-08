@@ -232,7 +232,7 @@ def call_groq_api(client: OpenAI, system_prompt: str, user_prompt: str) -> str:
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.7,
-                max_tokens=2048,
+                max_tokens=4096,
             )
             content = response.choices[0].message.content
             logger.info(f"API呼び出し成功 ({len(content)} 文字)")
@@ -251,29 +251,20 @@ def call_groq_api(client: OpenAI, system_prompt: str, user_prompt: str) -> str:
 def generate_article(client: OpenAI, topic: dict, system_prompt: str) -> str:
     """
     記事を生成する。
-    長い記事（ピラーページ）はセクション分割して生成し、最後に結合する。
+    ピラー・通常記事ともに intro → body → conclusion の3分割で生成し結合する。
+    max_tokens=2048 でも合計6,000文字以上を確保するため。
     """
-    is_pillar = topic.get("is_pillar", "False").lower() == "true"
+    logger.info("3分割生成を開始します (intro → body → conclusion)")
 
-    if is_pillar:
-        # ピラーページ: 3回に分けて生成
-        logger.info("ピラーページのため、セクション分割して生成します")
+    intro = call_groq_api(client, system_prompt, build_user_prompt(topic, "intro"))
+    time.sleep(3)  # レート制限対策
 
-        intro = call_groq_api(client, system_prompt, build_user_prompt(topic, "intro"))
-        time.sleep(3)  # レート制限対策
+    body = call_groq_api(client, system_prompt, build_user_prompt(topic, "body"))
+    time.sleep(3)
 
-        body = call_groq_api(client, system_prompt, build_user_prompt(topic, "body"))
-        time.sleep(3)
+    conclusion = call_groq_api(client, system_prompt, build_user_prompt(topic, "conclusion"))
 
-        conclusion = call_groq_api(client, system_prompt, build_user_prompt(topic, "conclusion"))
-
-        # フロントマターは intro 部分のものを使用し、本文を結合
-        article = _merge_sections(intro, body, conclusion)
-    else:
-        # 通常記事: 1回で生成
-        article = call_groq_api(client, system_prompt, build_user_prompt(topic, "full"))
-
-    return article
+    return _merge_sections(intro, body, conclusion)
 
 
 def _merge_sections(intro: str, body: str, conclusion: str) -> str:
