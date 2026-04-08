@@ -22,7 +22,7 @@ CONTEXT_DIR = ROOT / "context"
 DRAFTS_DIR = ROOT / "drafts"
 TOPICS_FILE = ROOT / "topics" / "current-topic.txt"
 
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "llama-3.1-8b-instant"  # TPD 500K（無料枠）
 MAX_RETRIES = 3
 RETRY_DELAY = 5  # 秒
 
@@ -232,7 +232,7 @@ def call_groq_api(client: OpenAI, system_prompt: str, user_prompt: str) -> str:
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.7,
-                max_tokens=4096,
+                max_tokens=2048,
             )
             content = response.choices[0].message.content
             logger.info(f"API呼び出し成功 ({len(content)} 文字)")
