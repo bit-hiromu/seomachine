@@ -79,6 +79,58 @@ date: "{datetime.now().strftime('%Y-%m-%d')}"
 コードブロックは必ず言語を指定し、実際に動作するコード例を含めてください。"""
 
 
+CLAUDE_CODE_FACTS = """
+## Claude Code に関する正確な情報
+
+Claude Code は Anthropic が開発した CLI ツール（コマンドラインインターフェース）です。
+IDE ではなく、ターミナルから使う AI コーディングエージェントです。
+
+### インストール方法
+```bash
+npm install -g @anthropic-ai/claude-code
+```
+
+### 基本的な起動方法
+```bash
+# プロジェクトディレクトリに移動して起動
+cd your-project
+claude
+```
+
+### 主なコマンド・使い方
+```bash
+# ファイルを読み込んで質問
+claude "このコードのバグを直して"
+
+# 特定ファイルを指定
+claude --file src/app.py "この関数を最適化して"
+
+# 会話を続ける（--continue）
+claude --continue
+
+# 非対話モード（スクリプト用）
+claude -p "テストを書いて" --output-format json
+```
+
+### 料金（2026年4月時点）
+- Claude Pro サブスクリプション（$20/月）に含まれる
+- API 従量課金での利用も可能
+- 入力: $3 / 1M トークン、出力: $15 / 1M トークン（Claude 3.5 Sonnet）
+- 1 日の使用量目安: コード補完・質問で 50〜200K トークン程度
+
+### Claude Code の特徴
+- ファイルの読み書き、コマンド実行、Git 操作まで自律的に行う
+- MCP（Model Context Protocol）でツール拡張が可能
+- `.claude/` ディレクトリで設定・カスタムコマンドを管理
+- CLAUDE.md でプロジェクト固有のルールを定義できる
+
+### GitHub Copilot / Cursor との違い
+- GitHub Copilot: エディタ補完中心。コード補完の精度が高い
+- Cursor: VS Code ベースの AI エディタ。GUI 操作が快適
+- Claude Code: CLI ベース。自律的なタスク実行が得意。ファイル操作・コマンド実行まで一貫して行える
+"""
+
+
 def build_user_prompt(topic: dict, section: str = "full") -> str:
     """記事生成用のユーザープロンプトを構築する。"""
     keyword = topic.get("keyword", "")
@@ -87,9 +139,14 @@ def build_user_prompt(topic: dict, section: str = "full") -> str:
 
     word_count = "5000〜7000文字" if is_pillar else "3000〜5000文字"
 
+    # Claude Code クラスターの記事には正確な情報を注入する
+    facts_section = ""
+    if "Claude Code" in cluster or "Claude Code" in keyword:
+        facts_section = f"\n\n以下の情報を参考にして、正確な内容を書いてください:\n{CLAUDE_CODE_FACTS}\n"
+
     if section == "full":
         return f"""以下のキーワードで日本語の技術ブログ記事を書いてください。
-
+{facts_section}
 【メインキーワード】{keyword}
 【トピッククラスター】{cluster}
 【目標文字数】{word_count}
@@ -97,14 +154,15 @@ def build_user_prompt(topic: dict, section: str = "full") -> str:
 
 要件:
 - YAMLフロントマター付きMarkdown形式で出力
-- 実際のコード例・コマンド例を必ず含める
-- 具体的な数値（実行時間、コスト、トークン数など）を示す
+- 実際のコマンド例（コピーしてそのまま動くもの）を必ず含める
+- 具体的な数値（コスト、トークン数、実行時間など）を示す
 - H2/H3で構造化し、各セクション300〜600文字
 - メリットとデメリット・注意点の両方を記載
+- 内部リンクのURLは `/entry/` で始まる仮URLを使用
 - 日本語で書いてください"""
     elif section == "intro":
         return f"""以下のキーワードで日本語記事のイントロダクション部分を書いてください。
-
+{facts_section}
 【メインキーワード】{keyword}
 【トピッククラスター】{cluster}
 
@@ -117,7 +175,7 @@ def build_user_prompt(topic: dict, section: str = "full") -> str:
 日本語で書いてください。"""
     elif section == "body":
         return f"""以下のキーワードで日本語記事の本文を書いてください。
-
+{facts_section}
 【メインキーワード】{keyword}
 【トピッククラスター】{cluster}
 【目標文字数】{word_count}
@@ -125,8 +183,8 @@ def build_user_prompt(topic: dict, section: str = "full") -> str:
 出力内容:
 - H2/H3で構造化された本文
 - 各セクション300〜600文字
-- 実際のコード例・コマンド例（言語指定必須）
-- 具体的な数値データ
+- 実際のコマンド例（言語指定必須、コピーしてそのまま動くもの）
+- 具体的な数値データ（コスト・時間など）
 - デメリット・注意点のセクションを含める
 
 日本語で書いてください。"""
@@ -137,7 +195,7 @@ def build_user_prompt(topic: dict, section: str = "full") -> str:
 
 出力内容:
 - ## まとめ セクション（箇条書きでポイントを整理）
-- 関連記事への内部リンク提案（2〜3本、URLは仮のもの）
+- 関連記事への内部リンク（URLは /entry/ で始まる仮URLを使用）
 
 日本語で書いてください。"""
     return ""
