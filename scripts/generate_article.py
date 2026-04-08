@@ -50,7 +50,23 @@ def load_current_topic() -> dict:
     return topic
 
 
-def build_system_prompt(brand_voice: str, style_guide: str, seo_guidelines: str) -> str:
+CLUSTER_CATEGORY_MAP = {
+    "Claude Code": "claude-code",
+    "AIツール":    "ai-tools",
+    "ワークフロー": "ai-workflow",
+    "トレンド":    "ai-news",
+}
+
+
+def cluster_to_category(cluster: str) -> str:
+    """クラスター名からはてなブログカテゴリを返す。"""
+    for key, cat in CLUSTER_CATEGORY_MAP.items():
+        if key in cluster:
+            return cat
+    return "ai-tools"
+
+
+def build_system_prompt(brand_voice: str, style_guide: str, seo_guidelines: str, category: str = "claude-code") -> str:
     """システムプロンプトを構築する。"""
     return f"""あなたは日本語の技術ブログ記事を執筆するSEOエキスパートです。
 以下のブランドボイス、スタイルガイド、SEOガイドラインに従って記事を作成してください。
@@ -69,7 +85,7 @@ def build_system_prompt(brand_voice: str, style_guide: str, seo_guidelines: str)
 ---
 title: "記事タイトル（32文字以内）"
 description: "メタディスクリプション（120文字以内）"
-category: "claude-code"
+category: "{category}"
 keywords: ["キーワード1", "キーワード2"]
 date: "{datetime.now().strftime('%Y-%m-%d')}"
 ---
@@ -315,8 +331,12 @@ def main():
         base_url="https://api.groq.com/openai/v1",
     )
 
+    # クラスターからカテゴリを決定
+    category = cluster_to_category(topic.get("cluster", ""))
+    logger.info(f"カテゴリ: {category}")
+
     # システムプロンプト構築
-    system_prompt = build_system_prompt(brand_voice, style_guide, seo_guidelines)
+    system_prompt = build_system_prompt(brand_voice, style_guide, seo_guidelines, category)
 
     # 記事生成
     article = generate_article(client, topic, system_prompt)
