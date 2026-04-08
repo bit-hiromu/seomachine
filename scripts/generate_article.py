@@ -22,7 +22,7 @@ CONTEXT_DIR = ROOT / "context"
 DRAFTS_DIR = ROOT / "drafts"
 TOPICS_FILE = ROOT / "topics" / "current-topic.txt"
 
-GROQ_MODEL = "gemma2-9b-it"  # TPM 15K / TPD 500K（無料枠）
+GROQ_MODEL = "llama-3.3-70b-versatile"  # TPD 100K（1日1記事=約20Kトークンで問題なし）
 MAX_RETRIES = 3
 RETRY_DELAY = 5  # 秒
 
