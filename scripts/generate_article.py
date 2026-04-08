@@ -1,0 +1,270 @@
+#!/usr/bin/env python3
+"""
+generate_article.py
+Groq API (OpenAI互換) を使って SEO 最適化された日本語記事を生成し、
+drafts/ フォルダに Markdown + YAMLフロントマター形式で保存する。
+"""
+
+import os
+import re
+import time
+import logging
+from datetime import datetime
+from pathlib import Path
+
+from openai import OpenAI, RateLimitError, APIError
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger(__name__)
+
+ROOT = Path(__file__).parent.parent
+CONTEXT_DIR = ROOT / "context"
+DRAFTS_DIR = ROOT / "drafts"
+TOPICS_FILE = ROOT / "topics" / "current-topic.txt"
+
+GROQ_MODEL = "llama-3.3-70b-versatile"
+MAX_RETRIES = 3
+RETRY_DELAY = 5  # 秒
+
+
+def load_context_file(filename: str) -> str:
+    """context/ フォルダからファイルを読み込む。"""
+    filepath = CONTEXT_DIR / filename
+    if not filepath.exists():
+        logger.warning(f"コンテキストファイルが見つかりません: {filepath}")
+        return ""
+    with open(filepath, encoding="utf-8") as f:
+        return f.read()
+
+
+def load_current_topic() -> dict:
+    """topics/current-topic.txt から選択済みトピックを読み込む。"""
+    if not TOPICS_FILE.exists():
+        raise FileNotFoundError(f"トピックファイルが見つかりません: {TOPICS_FILE}")
+    topic = {}
+    with open(TOPICS_FILE, encoding="utf-8") as f:
+        for line in f:
+            if ": " in line:
+                key, value = line.strip().split(": ", 1)
+                topic[key.strip()] = value.strip()
+    return topic
+
+
+def build_system_prompt(brand_voice: str, style_guide: str, seo_guidelines: str) -> str:
+    """システムプロンプトを構築する。"""
+    return f"""あなたは日本語の技術ブログ記事を執筆するSEOエキスパートです。
+以下のブランドボイス、スタイルガイド、SEOガイドラインに従って記事を作成してください。
+
+---
+{brand_voice}
+---
+{style_guide}
+---
+{seo_guidelines}
+---
+
+記事は必ず以下の形式で出力してください:
+
+```yaml
+---
+title: "記事タイトル（32文字以内）"
+description: "メタディスクリプション（120文字以内）"
+category: "claude-code"
+keywords: ["キーワード1", "キーワード2"]
+date: "{datetime.now().strftime('%Y-%m-%d')}"
+---
+```
+
+その後に Markdown 形式の本文を続けてください。
+コードブロックは必ず言語を指定し、実際に動作するコード例を含めてください。"""
+
+
+def build_user_prompt(topic: dict, section: str = "full") -> str:
+    """記事生成用のユーザープロンプトを構築する。"""
+    keyword = topic.get("keyword", "")
+    cluster = topic.get("cluster", "")
+    is_pillar = topic.get("is_pillar", "False").lower() == "true"
+
+    word_count = "5000〜7000文字" if is_pillar else "3000〜5000文字"
+
+    if section == "full":
+        return f"""以下のキーワードで日本語の技術ブログ記事を書いてください。
+
+【メインキーワード】{keyword}
+【トピッククラスター】{cluster}
+【目標文字数】{word_count}
+【記事タイプ】{"ピラーページ（包括的ガイド）" if is_pillar else "サポート記事（具体的なハウツー）"}
+
+要件:
+- YAMLフロントマター付きMarkdown形式で出力
+- 実際のコード例・コマンド例を必ず含める
+- 具体的な数値（実行時間、コスト、トークン数など）を示す
+- H2/H3で構造化し、各セクション300〜600文字
+- メリットとデメリット・注意点の両方を記載
+- 日本語で書いてください"""
+    elif section == "intro":
+        return f"""以下のキーワードで日本語記事のイントロダクション部分を書いてください。
+
+【メインキーワード】{keyword}
+【トピッククラスター】{cluster}
+
+出力内容:
+- YAMLフロントマター（title, description, category, keywords, date）
+- H1タイトル
+- リード文（3〜5文、要点とメリットを簡潔に）
+- 目次（H2見出しのリスト）
+
+日本語で書いてください。"""
+    elif section == "body":
+        return f"""以下のキーワードで日本語記事の本文を書いてください。
+
+【メインキーワード】{keyword}
+【トピッククラスター】{cluster}
+【目標文字数】{word_count}
+
+出力内容:
+- H2/H3で構造化された本文
+- 各セクション300〜600文字
+- 実際のコード例・コマンド例（言語指定必須）
+- 具体的な数値データ
+- デメリット・注意点のセクションを含める
+
+日本語で書いてください。"""
+    elif section == "conclusion":
+        return f"""以下のキーワードで日本語記事のまとめ部分を書いてください。
+
+【メインキーワード】{keyword}
+
+出力内容:
+- ## まとめ セクション（箇条書きでポイントを整理）
+- 関連記事への内部リンク提案（2〜3本、URLは仮のもの）
+
+日本語で書いてください。"""
+    return ""
+
+
+def call_groq_api(client: OpenAI, system_prompt: str, user_prompt: str) -> str:
+    """Groq API を呼び出す。レート制限時はリトライする。"""
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            logger.info(f"API呼び出し (試行 {attempt}/{MAX_RETRIES})")
+            response = client.chat.completions.create(
+                model=GROQ_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.7,
+                max_tokens=4096,
+            )
+            content = response.choices[0].message.content
+            logger.info(f"API呼び出し成功 ({len(content)} 文字)")
+            return content
+        except RateLimitError as e:
+            wait = RETRY_DELAY * (2 ** (attempt - 1))
+            logger.warning(f"レート制限エラー: {e}. {wait}秒後にリトライします")
+            time.sleep(wait)
+        except APIError as e:
+            wait = RETRY_DELAY * attempt
+            logger.warning(f"APIエラー: {e}. {wait}秒後にリトライします")
+            time.sleep(wait)
+    raise RuntimeError(f"API呼び出しが {MAX_RETRIES} 回失敗しました")
+
+
+def generate_article(client: OpenAI, topic: dict, system_prompt: str) -> str:
+    """
+    記事を生成する。
+    長い記事（ピラーページ）はセクション分割して生成し、最後に結合する。
+    """
+    is_pillar = topic.get("is_pillar", "False").lower() == "true"
+
+    if is_pillar:
+        # ピラーページ: 3回に分けて生成
+        logger.info("ピラーページのため、セクション分割して生成します")
+
+        intro = call_groq_api(client, system_prompt, build_user_prompt(topic, "intro"))
+        time.sleep(3)  # レート制限対策
+
+        body = call_groq_api(client, system_prompt, build_user_prompt(topic, "body"))
+        time.sleep(3)
+
+        conclusion = call_groq_api(client, system_prompt, build_user_prompt(topic, "conclusion"))
+
+        # フロントマターは intro 部分のものを使用し、本文を結合
+        article = _merge_sections(intro, body, conclusion)
+    else:
+        # 通常記事: 1回で生成
+        article = call_groq_api(client, system_prompt, build_user_prompt(topic, "full"))
+
+    return article
+
+
+def _merge_sections(intro: str, body: str, conclusion: str) -> str:
+    """
+    イントロ・本文・まとめを結合する。
+    フロントマターは intro から取り、body/conclusion の余分なフロントマターを除去する。
+    """
+    def strip_frontmatter(text: str) -> str:
+        """YAMLフロントマターを除去する。"""
+        stripped = re.sub(r"^---[\s\S]*?---\s*", "", text, count=1)
+        return stripped.strip()
+
+    body_clean = strip_frontmatter(body)
+    conclusion_clean = strip_frontmatter(conclusion)
+
+    return f"{intro.strip()}\n\n{body_clean}\n\n{conclusion_clean}"
+
+
+def save_draft(content: str, keyword: str) -> Path:
+    """生成した記事を drafts/ に保存する。"""
+    DRAFTS_DIR.mkdir(parents=True, exist_ok=True)
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    # ファイル名用にキーワードをサニタイズ
+    safe_keyword = re.sub(r"[^\w\u3040-\u9FFF\u30A0-\u30FF]", "-", keyword)
+    safe_keyword = re.sub(r"-+", "-", safe_keyword).strip("-")[:50]
+    filename = f"{date_str}-{safe_keyword}.md"
+    filepath = DRAFTS_DIR / filename
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(content)
+
+    logger.info(f"記事を保存しました: {filepath}")
+    return filepath
+
+
+def main():
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        raise EnvironmentError("GROQ_API_KEY 環境変数が設定されていません")
+
+    logger.info("記事生成を開始します")
+
+    # コンテキスト読み込み
+    brand_voice = load_context_file("brand-voice.md")
+    style_guide = load_context_file("style-guide.md")
+    seo_guidelines = load_context_file("seo-guidelines.md")
+
+    # トピック読み込み
+    topic = load_current_topic()
+    logger.info(f"トピック: {topic.get('keyword')} ({topic.get('cluster')})")
+
+    # Groq クライアント初期化
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://api.groq.com/openai/v1",
+    )
+
+    # システムプロンプト構築
+    system_prompt = build_system_prompt(brand_voice, style_guide, seo_guidelines)
+
+    # 記事生成
+    article = generate_article(client, topic, system_prompt)
+
+    # 保存
+    filepath = save_draft(article, topic.get("keyword", "article"))
+    print(f"DRAFT_FILE={filepath}")
+    logger.info("記事生成完了")
+
+
+if __name__ == "__main__":
+    main()
